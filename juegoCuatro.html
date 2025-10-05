@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Juego 4 - Palabras que Sanan</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Poppins', sans-serif;
+      background: linear-gradient(135deg, #cdb4db, #bde0fe);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      color: #333;
+      overflow-x: hidden;
+      padding: 10px;
+    }
+
+    h1 {
+      color: #5a189a;
+      text-shadow: 1px 1px 3px #fff;
+      text-align: center;
+    }
+
+    .game-container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+      max-width: 800px;
+      margin-top: 30px;
+    }
+
+    .column {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      width: 45%;
+    }
+
+    .word, .match {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      padding: 12px;
+      text-align: center;
+      cursor: grab;
+      font-weight: bold;
+      transition: transform 0.2s, background 0.2s;
+    }
+
+    .word:hover, .match:hover {
+      transform: scale(1.05);
+      background: #fdfd96;
+    }
+
+    .correct {
+      background: #b5e48c !important;
+    }
+
+    .wrong {
+      background: #ffadad !important;
+    }
+
+    .success {
+      display: none;
+      text-align: center;
+      margin-top: 30px;
+      animation: fadeIn 1s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+      from {opacity: 0;}
+      to {opacity: 1;}
+    }
+
+    .btn {
+      background-color: #5a189a;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      margin-top: 20px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: 0.3s;
+    }
+
+    .btn:hover {
+      background-color: #7b2cbf;
+    }
+
+    @media (max-width: 600px) {
+      .game-container {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .column {
+        width: 90%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>🌸 Palabras que Sanan 🌸</h1>
+  <p>Arrastra la frase de la izquierda hacia su complemento correcto en la derecha.</p>
+
+  <div class="game-container">
+    <div class="column" id="left-column"></div>
+    <div class="column" id="right-column"></div>
+  </div>
+
+ <div class="success" id="success-message">
+  <h2>✨ ¡Has unido todas las palabras que sanan! ✨</h2>
+  <button class="btn" onclick="window.location.href='index.html'">Volver al inicio</button>
+  <button class="btn" onclick="window.location.href='juegoCinco.html'">Siguiente Juego ➡️</button>
+</div>
+
+
+  <script>
+    const pairs = [
+      { left: "Gracias", right: "por estar conmigo" },
+      { left: "Perdón", right: "por mis errores" },
+      { left: "Confío", right: "en los demás" },
+      { left: "Respeto", right: "a todas las personas" },
+      { left: "Ayudo", right: "sin esperar nada a cambio" },
+      { left: "Escucho", right: "con empatía y calma" },
+      { left: "Valoro", right: "las diferencias de los demás" },
+      { left: "Comparto", right: "lo que tengo con amor" }
+    ];
+
+    let shuffledPairs = pairs.sort(() => Math.random() - 0.5).slice(0, 5);
+
+    const leftColumn = document.getElementById('left-column');
+    const rightColumn = document.getElementById('right-column');
+
+    shuffledPairs.forEach((p, i) => {
+      const leftDiv = document.createElement('div');
+      leftDiv.textContent = p.left;
+      leftDiv.classList.add('word');
+      leftDiv.draggable = true;
+      leftDiv.id = "left-" + i;
+      leftColumn.appendChild(leftDiv);
+
+      const rightDiv = document.createElement('div');
+      rightDiv.textContent = p.right;
+      rightDiv.classList.add('match');
+      rightDiv.id = "right-" + i;
+      rightColumn.appendChild(rightDiv);
+    });
+
+    // Barajar las opciones de la derecha
+    for (let i = rightColumn.children.length; i >= 0; i--) {
+      rightColumn.appendChild(rightColumn.children[Math.random() * i | 0]);
+    }
+
+    let correctCount = 0;
+
+    document.querySelectorAll('.word').forEach(item => {
+      item.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text', e.target.id);
+      });
+    });
+
+    document.querySelectorAll('.match').forEach(target => {
+      target.addEventListener('dragover', e => e.preventDefault());
+      target.addEventListener('drop', e => {
+        e.preventDefault();
+        const draggedId = e.dataTransfer.getData('text');
+        const dragged = document.getElementById(draggedId);
+
+        if (draggedId.split('-')[1] === target.id.split('-')[1]) {
+          target.classList.add('correct');
+          dragged.classList.add('correct');
+          dragged.draggable = false;
+          target.textContent = target.textContent + " ❤️";
+          correctCount++;
+          if (correctCount === 5) {
+            document.getElementById('success-message').style.display = 'block';
+          }
+        } else {
+          target.classList.add('wrong');
+          setTimeout(() => target.classList.remove('wrong'), 800);
+        }
+      });
+    });
+  </script>
+</body>
+</html>
