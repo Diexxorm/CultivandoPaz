@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Camino a la Paz</title>
+<style>
+  :root{
+    --morado:#7b2cbf;
+    --celeste:#48cae4;
+    --amarillo:#ffd54f;
+    --fondo1: linear-gradient(135deg,#e9d5ff,#d7f7ff);
+  }
+  *{box-sizing:border-box;font-family:Poppins,system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0}
+  body{min-height:100vh;background:var(--fondo1);display:flex;flex-direction:column;align-items:center;padding:12px;color:#222}
+  header{width:100%;max-width:1000px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  h1{color:var(--morado);font-size:1.6rem}
+  .hud{display:flex;gap:12px;align-items:center}
+  .badge{background:white;padding:6px 10px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,0.08);font-weight:600}
+  /* area del juego */
+  .stage{width:100%;max-width:1000px;background:linear-gradient(180deg,#f7f3ff,#eafcff);border-radius:12px;padding:12px;box-shadow:0 6px 20px rgba(0,0,0,0.08);position:relative}
+  canvas{display:block;width:100%;height:auto;border-radius:8px;background:linear-gradient(180deg,#dfe7ff,#effffb)}
+  /* overlay de pregunta */
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);z-index:20}
+  .card{background:white;padding:18px;border-radius:12px;max-width:560px;width:92%;box-shadow:0 8px 30px rgba(0,0,0,0.2);text-align:center}
+  .card h3{color:var(--morado);margin-bottom:10px}
+  .choices{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+  .choice{background:var(--celeste);color:#042;padding:10px;border-radius:10px;cursor:pointer;font-weight:700}
+  .choice.wrong{background:#ffc9c9}
+  .choice.correct{background:#b7f3bd}
+  /* botones táctiles */
+  .controls{display:none;position:absolute;bottom:16px;left:50%;transform:translateX(-50%);z-index:15;gap:8px}
+  .pad{display:flex;gap:8px}
+  .btn{background:rgba(255,255,255,0.9);padding:12px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.15)}
+  .btn:active{transform:translateY(1px)}
+  /* mensaje final */
+  .final{padding:18px;margin-top:12px;background:linear-gradient(90deg,var(--amarillo),#ffeaa7);border-radius:12px;font-weight:700;color:#222;display:none}
+  /* responsive */
+  @media (max-width:700px){
+    header{flex-direction:column;gap:8px;align-items:flex-start}
+    .controls{display:flex}
+    canvas{height:60vh}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Camino a la Paz</h1>
+  <div class="hud">
+    <div class="badge" id="score">Puntos: 0</div>
+    <div class="badge" id="lives">Vidas: 3</div>
+    <div class="badge" id="phase">Fase: 1</div>
+  </div>
+</header>
+
+<section class="stage" id="stage">
+  <!-- canvas se ajusta al ancho del contenedor -->
+  <canvas id="canvas"></canvas>
+
+  <!-- overlay pregunta (se muestra cuando el jugador entra a una zona de decisión) -->
+  <div class="overlay" id="overlay" style="display:none">
+    <div class="card" id="card">
+      <h3 id="qtext">Pregunta</h3>
+      <div class="choices" id="choices"></div>
+      <div style="margin-top:10px">
+        <button class="btn" onclick="cerrarOverlay()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- controles táctiles para móviles -->
+  <div class="controls" id="controls" style="display:none">
+    <div class="pad">
+      <div class="btn" id="leftBtn">◀</div>
+      <div class="btn" id="upBtn">▲</div>
+      <div class="btn" id="downBtn">▼</div>
+      <div class="btn" id="rightBtn">▶</div>
+    </div>
+  </div>
+</section>
+
+<div class="final" id="final">Has llegado al Templo de la Paz — desbloqueaste la siguiente fase. <button class="btn" onclick="volverInicio()">Volver al inicio</button></div>
+
+<script>
+/* ====== Juego: Camino a la Paz ======
+ - canvas + requestAnimationFrame
+ - movimiento fluido: keydown/keyup (mantener tecla para mover)
+ - zonas de decisión (al entrar, pausa y muestra pregunta)
+ - pickups verdes (palabras amables), obstáculos rojos (palabras hirientes)
+ - al responder bien: +puntaje, desbloquea/reduce obstáculos
+ - al final: si puntos >= threshold => éxito -> localStorage 'juego5_completed'
+*/
+
+const canvas = document.getElementById('canvas');
+const stage = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas(){
+  canvas.width = stage.clientWidth - 24; // padding compensation
+  canvas.height = Math.max(window.innerHeight * 0.55, 420);
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// HUD
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const phaseEl = document.getElementById('phase');
+const overlay = document.getElementById('overlay');
+const qtext = document.getElementById('qtext');
+const choicesDiv = document.getElementById('choices');
+const finalDiv = document.getElementById('final');
+
+// jugador
+const player = {
+  x: 60, y: 60, r: 14,
+  speed: 160, vx:0, vy:0,
+  color:'#673ab7'
+};
+
+// mapa de objetos
+let pickups = []; // palabras amables (verdes)
+let hazards = []; // palabras hirientes (rojo)
+let decisionZones = []; // zonas que lanzan preguntas
+let endZone; // meta
+let score = 0;
+let lives = 3;
+let currentPhase = 1;
+let paused = false;
+let questionsPool = [];
+
+// teclas - soporte mantener
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key]=true; });
+window.addEventListener('keyup', e => { keys[e.key]=false; });
+
+// controles táctiles
+const controls = document.getElementById('controls');
+function detectTouch(){ if(window.matchMedia("(max-width:700px)").matches){ controls.style.display='flex'; } }
+detectTouch();
+window.addEventListener('resize', detectTouch);
+document.getElementById('leftBtn').addEventListener('touchstart', ()=>keys['ArrowLeft']=true);
+document.getElementById('leftBtn').addEventListener('touchend', ()=>keys['ArrowLeft']=false);
+document.getElementById('rightBtn').addEventListener('touchstart', ()=>keys['ArrowRight']=true);
+document.getElementById('rightBtn').addEventListener('touchend', ()=>keys['ArrowRight']=false);
+document.getElementById('upBtn').addEventListener('touchstart', ()=>keys['ArrowUp']=true);
+document.getElementById('upBtn').addEventListener('touchend', ()=>keys['ArrowUp']=false);
+document.getElementById('downBtn').addEventListener('touchstart', ()=>keys['ArrowDown']=true);
+document.getElementById('downBtn').addEventListener('touchend', ()=>keys['ArrowDown']=false);
+
+// preguntas (más variadas)
+const ALL_QUESTIONS = [
+  {q:"¿Qué haces si alguien está triste?", opts:["Lo escucho y acompaño","Lo ignoro","Me río"], a:0},
+  {q:"Si encuentras algo perdido, ¿qué haces?", opts:["Lo devuelvo si hay contacto","Lo guardo","Lo tiro"], a:0},
+  {q:"Al ganar con trampas, debes:", opts:["Confesar y aprender","Celebrar y callar","Culpar"], a:0},
+  {q:"Tu compañero se equivoca, tú:", opts:["Lo ayudas a mejorar","Te burlas","Lo ignoro"], a:0},
+  {q:"Una disculpa sincera es:", opts:["Importante para sanar","Innecesaria siempre","Solo para mostrar"], a:0},
+  {q:"Si alguien nuevo llega a clase:", opts:["Lo invito a acercarse","Lo ignoro","Me burlo"], a:0},
+  {q:"Si alguien comparte contigo, tú:", opts:["Agradeces y compartes también","Lo tomas sin decir","Lo criticas"], a:0},
+  {q:"La paz comienza cuando:", opts:["Respetamos al otro","Solo pensamos en nosotros","Ignoramos diferencias"], a:0}
+];
+
+// elegir 5 aleatorias para el run (si quieres más, cambia número)
+function pickRandomQuestions(n){
+  const shuffled = [...ALL_QUESTIONS].sort(()=>0.5-Math.random());
+  return shuffled.slice(0,n);
+}
+
+// inicializar nivel
+function createLevel(){
+  // limpiar
+  pickups = []; hazards = []; decisionZones = [];
+  score = 0; lives = 3; currentPhase = 1;
+  scoreEl.textContent = 'Puntos: 0';
+  livesEl.textContent = 'Vidas: 3';
+  phaseEl.textContent = 'Fase: 1';
+  player.x = 60; player.y = 60;
+
+  // generar pickups y hazards en posiciones relativas
+  // estrategia: crear pasillo con obstáculos y 3 zonas de decision
+  const w = canvas.width, h = canvas.height;
+
+  // pickups (palabras amables)
+  const friendlyWords = ["Gracias","Ayuda","Escucha","Perdón","Apoyo","Cuidado","Sonrisa"];
+  for(let i=0;i<8;i++){
+    pickups.push({
+      x: Math.random()*(w-120)+80,
+      y: (h*0.2) + Math.random()*(h*0.6),
+      r:14,
+      text:friendlyWords[i%friendlyWords.length],
+      taken:false
+    });
+  }
+
+  // hazards (palabras hirientes)
+  const badWords = ["Injuria","Burlas","Mentira","Indiferencia","Rabia","Culpa"];
+  for(let i=0;i<6;i++){
+    hazards.push({
+      x: Math.random()*(w-120)+80,
+      y: (h*0.15) + Math.random()*(h*0.7),
+      w:40,h:24,
+      text:badWords[i%badWords.length],
+      active:true
+    });
+  }
+
+  // decision zones (3) - al entrar muestra pregunta
+  const zoneCount = 3;
+  const zoneSpacing = Math.floor(w/(zoneCount+1));
+  for(let i=1;i<=zoneCount;i++){
+    decisionZones.push({
+      x: zoneSpacing*i - 40,
+      y: 30 + Math.random()*(h-120),
+      w:80, h:60,
+      used:false,
+      id:i-1
+    });
+  }
+
+  // end zone (meta)
+  endZone = {x: w-110, y: h-80, w:90, h:60};
+
+  // preguntas para las zonas: elegimos 3 al azar
+  questionsPool = pickRandomQuestions(decisionZones.length);
+}
+
+createLevel();
+
+/* ==== util: collision circle-rect ==== */
+function circleRectColl(cx,cy,r,rx,ry,rw,rh){
+  // find closest point
+  const closestX = Math.max(rx, Math.min(cx, rx+rw));
+  const closestY = Math.max(ry, Math.min(cy, ry+rh));
+  const dx = cx - closestX; const dy = cy - closestY;
+  return (dx*dx + dy*dy) <= r*r;
+}
+
+/* ==== update/draw loop ==== */
+let last = performance.now();
+function loop(ts){
+  const dt = (ts - last)/1000; last = ts;
+  if(!paused){
+    update(dt);
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* movement */
+function update(dt){
+  const s = player.speed;
+  // velocity from keys: support WASD and Arrow keys
+  player.vx = 0; player.vy = 0;
+  if(keys['ArrowLeft'] || keys['a']) player.vx = -s;
+  if(keys['ArrowRight'] || keys['d']) player.vx = s;
+  if(keys['ArrowUp'] || keys['w']) player.vy = -s;
+  if(keys['ArrowDown'] || keys['s']) player.vy = s;
+  // normalize diagonal speed
+  if(player.vx && player.vy){ player.vx *= 0.7071; player.vy *= 0.7071; }
+
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+
+  // bounds clamp
+  player.x = Math.max(10, Math.min(canvas.width-10, player.x));
+  player.y = Math.max(10, Math.min(canvas.height-10, player.y));
+
+  // pickups collision
+  pickups.forEach(p=>{
+    if(!p.taken){
+      const dx = player.x - p.x, dy = player.y - p.y;
+      if(Math.hypot(dx,dy) < player.r + p.r){
+        // pickup collected
+        p.taken = true;
+        score += 2;
+        scoreEl.textContent = 'Puntos: ' + score;
+        // small effect: remove some nearby hazard as "pacified"
+        for(let j=0;j<hazards.length;j++){
+          if(hazards[j].active){
+            const hx = hazards[j].x, hy = hazards[j].y;
+            if(Math.hypot(hx-p.x, hy-p.y) < 100){
+              hazards[j].active = false;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // hazards collision
+  hazards.forEach(h=>{
+    if(h.active){
+      if(circleRectColl(player.x,player.y,player.r,h.x,h.y,h.w,h.h)){
+        // hit hazard
+        h.active = false; // temporary: deactivate
+        lives -= 1;
+        livesEl.textContent = 'Vidas: ' + lives;
+        // small penalty
+        score = Math.max(0, score-1);
+        scoreEl.textContent = 'Puntos: ' + score;
+        // knockback
+        player.x -= (player.vx||40)*0.2;
+        player.y -= (player.vy||40)*0.2;
+        if(lives<=0){
+          gameOver();
+        }
+      }
+    }
+  });
+
+  // decision zone - check overlap
+  decisionZones.forEach((z,idx)=>{
+    if(!z.used && circleRectColl(player.x,player.y,player.r,z.x,z.y,z.w,z.h)){
+      // trigger question
+      z.used = true;
+      paused = true;
+      showQuestionOverlay(idx);
+    }
+  });
+
+  // end zone
+  if(circleRectColl(player.x,player.y,player.r,endZone.x,endZone.y,endZone.w,endZone.h)){
+    // reached end: check score threshold
+    if(score >= 6){
+      success();
+    } else {
+      // encourage to improve: move player back a bit
+      player.x = 60; player.y = 60;
+      score = Math.max(0, score-1);
+      scoreEl.textContent = 'Puntos: ' + score;
+      showHint("Necesitas más puntos para entrar al Templo de la Paz.");
+    }
+  }
+}
+
+function draw(){
+  // clear
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // background grid / path for style
+  ctx.save();
+  ctx.fillStyle = "#f7f9ff";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  // subtle path stripes
+  ctx.fillStyle = "rgba(120,90,200,0.03)";
+  const step = 40;
+  for(let i=0;i<canvas.width;i+=step){
+    ctx.fillRect(i,0,6,canvas.height);
+  }
+  ctx.restore();
+
+  // draw pickups
+  pickups.forEach(p=>{
+    if(!p.taken){
+      ctx.beginPath();
+      ctx.fillStyle = "#9be7a9";
+      ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = "#056a32";
+      ctx.font = '11px Poppins';
+      ctx.textAlign = 'center';
+      ctx.fillText(p.text, p.x, p.y+4);
+    }
+  });
+
+  // draw hazards
+  hazards.forEach(h=>{
+    if(h.active){
+      ctx.fillStyle = "#ffb3b3";
+      ctx.fillRect(h.x, h.y, h.w, h.h,4);
+      ctx.fillStyle="#7a0019";
+      ctx.font='12px Poppins';
+      ctx.textAlign='center';
+      ctx.fillText(h.text, h.x + h.w/2, h.y + h.h/2 +5);
+    } else {
+      // faded
+      ctx.fillStyle = "rgba(180,180,180,0.18)";
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+    }
+  });
+
+  // decision zones
+  decisionZones.forEach(z=>{
+    ctx.save();
+    ctx.strokeStyle = z.used ? "rgba(120,120,120,0.15)" : "#ffd54f";
+    ctx.lineWidth = 2;
+    ctx.setLineDash(z.used ? [2,6] : []);
+    ctx.strokeRect(z.x,z.y,z.w,z.h);
+    ctx.fillStyle = "rgba(255,213,79,0.06)";
+    ctx.fillRect(z.x,z.y,z.w,z.h);
+    ctx.restore();
+    ctx.fillStyle = "#444";
+    ctx.font = '11px Poppins';
+    ctx.textAlign = 'center';
+    ctx.fillText("Decisión", z.x+z.w/2, z.y+z.h/2 +4);
+  });
+
+  // draw end zone
+  ctx.fillStyle = "#fff1a8";
+  ctx.fillRect(endZone.x,endZone.y,endZone.w,endZone.h);
+  ctx.fillStyle="#333";
+  ctx.font='12px Poppins';
+  ctx.textAlign='center';
+  ctx.fillText("Templo de la Paz", endZone.x+endZone.w/2, endZone.y+endZone.h/2 +5);
+
+  // draw player
+  ctx.beginPath();
+  ctx.fillStyle = player.color;
+  ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
+  ctx.fill();
+  // eye/mark
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(player.x-2,player.y-2,4,4);
+}
+
+/* overlay: preguntas */
+function showQuestionOverlay(idx){
+  overlay.style.display = 'flex';
+  const q = questionsPool[idx];
+  qtext.textContent = q.q;
+  choicesDiv.innerHTML = '';
+  // shuffle options
+  const opts = q.opts.map((o,i)=> ({o,i})).sort(()=>0.5-Math.random());
+  opts.forEach(opt=>{
+    const d = document.createElement('div');
+    d.className = 'choice';
+    d.textContent = opt.o;
+    d.onclick = ()=> answerQuestion(opt.i, idx, d);
+    choicesDiv.appendChild(d);
+  });
+}
+
+function cerrarOverlay(){
+  overlay.style.display='none';
+  paused=false;
+}
+
+function answerQuestion(selectedIndex, zoneIdx, domEl){
+  const q = questionsPool[zoneIdx];
+  // mark and wait briefly
+  const correct = (selectedIndex === q.a);
+  if(correct){
+    domEl.classList.add('correct');
+    score += 3;
+    scoreEl.textContent = 'Puntos: ' + score;
+    showHint("¡Buena decisión! El camino se abre.");
+    // reward: clear some hazards nearby
+    hazards.forEach(h=>{
+      if(h.active && Math.hypot(h.x - (decisionZones[zoneIdx].x+40), h.y - (decisionZones[zoneIdx].y+30)) < 160){
+        h.active = false;
+      }
+    });
+  } else {
+    domEl.classList.add('wrong');
+    lives = Math.max(0, lives-1);
+    livesEl.textContent = 'Vidas: ' + lives;
+    showHint("Esa decisión apaga un poco la luz. Intenta de nuevo.");
+    if(lives===0){ gameOver(); }
+  }
+  // keep overlay for a moment then close
+  setTimeout(()=>{
+    overlay.style.display='none';
+    paused=false;
+  },1000);
+}
+
+/* mensajes breves */
+let hintTimer=null;
+function showHint(msg){
+  clearTimeout(hintTimer);
+  const prev = document.getElementById('tmpHint');
+  if(prev) prev.remove();
+  const el = document.createElement('div');
+  el.id='tmpHint';
+  el.style.position='fixed';
+  el.style.left='50%';
+  el.style.bottom='18px';
+  el.style.transform='translateX(-50%)';
+  el.style.background='rgba(0,0,0,0.7)';
+  el.style.color='white';
+  el.style.padding='8px 12px';
+  el.style.borderRadius='12px';
+  el.style.zIndex=99;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  hintTimer = setTimeout(()=>el.remove(),1700);
+}
+
+/* éxito y guardado */
+function success(){
+  paused = true;
+  finalDiv.style.display = 'block';
+  // save progress
+  localStorage.setItem('juego5_completed','true');
+  showHint("¡Juego completado! Progreso guardado.");
+}
+
+/* game over */
+function gameOver(){
+  paused = true;
+  alert("Te quedaste sin vidas. Reiniciando nivel.");
+  createLevel();
+  paused = false;
+}
+
+/* util */
+function volverInicio(){ window.location.href='inicio.html' }
+
+// touch fallback to show controls on small screens
+if(window.matchMedia("(max-width:700px)").matches){
+  document.getElementById('controls').style.display = 'flex';
+}
+</script>
+</body>
+</html>
